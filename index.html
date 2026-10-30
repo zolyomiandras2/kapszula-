@@ -177,9 +177,9 @@
             .from('capsule-photos')
             .getPublicUrl(filePath);
 
-          // 3. Feloldási dátum: 6 hónap múlva
+          // 3. Feloldási dátum: 1 hét múlva
           const unlock = new Date();
-          unlock.setMonth(unlock.getMonth() + 6);
+          unlock.setDate(unlock.getDate() + 7);
           const unlockDateStr = unlock.toISOString().split('T')[0];
 
           // 4. Mentés az adatbázisba

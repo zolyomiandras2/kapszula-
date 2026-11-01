@@ -239,17 +239,16 @@
         return () => supabase.removeChannel(channel);
       }, [currentDay]);
 
+      // ÚJ: FIX INDULÁS MÁTÓL
       const calculateTodayDay = () => {
-        const startDateKey = 'kapszula_start_date';
-        let startDate = localStorage.getItem(startDateKey);
-        if (!startDate) {
-          startDate = new Date().toISOString().split('T')[0];
-          localStorage.setItem(startDateKey, startDate);
-        }
-        const diffDays = Math.floor((new Date() - new Date(startDate)) / (1000 * 60 * 60 * 24)) + 1;
+        const startDate = new Date('2026-11-01T00:00:00');
+        const now = new Date();
+        const diffTime = Math.max(0, now - startDate);
+        const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24)) + 1;
         const currentActive = Math.max(1, diffDays);
         setTodayUnlockedDay(currentActive);
         setCurrentDay(currentActive);
+      };
       };
 
       const loadData = async () => {

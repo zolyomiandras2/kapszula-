@@ -42,7 +42,72 @@
     const SUPABASE_URL = "https://jpbzlvfxrkmiazaeanaw.supabase.co";
     const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImpwYnpsdmZ4cmttaWF6YWVhbmF3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTMzNjIxMTMsImV4cCI6MjEwODkzODExM30.dMvV3SoUvUyuZSvn2omHvhoF5Yy9pMCJdpIsJun5rDE";
 
+    // === ITT ÁLLÍTSD BE A PONTOS DÁTUMOT, AMIKORTÓL EGYÜTT VAGYTOK ===
+    // Formátum: "ÉÉÉÉ-HH-NNTÓÓ:PP:MM" (pl. "2026-10-15T20:00:00")
+    const RELATIONSHIP_START_DATE = "2026-10-15T20:00:00";
+
     const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+    // Élő Évforduló Számláló Komponens
+    function LoveTimer() {
+      const [elapsed, setElapsed] = useState({ days: 0, hours: 0, minutes: 0, seconds: 0 });
+
+      useEffect(() => {
+        const updateTimer = () => {
+          const start = new Date(RELATIONSHIP_START_DATE).getTime();
+          const now = new Date().getTime();
+          const diff = Math.max(0, now - start);
+
+          const days = Math.floor(diff / (1000 * 60 * 60 * 24));
+          const hours = Math.floor((diff / (1000 * 60 * 60)) % 24);
+          const minutes = Math.floor((diff / 1000 / 60) % 60);
+          const seconds = Math.floor((diff / 1000) % 60);
+
+          setElapsed({ days, hours, minutes, seconds });
+        };
+
+        updateTimer();
+        const interval = setInterval(updateTimer, 1000);
+        return () => clearInterval(interval);
+      }, []);
+
+      return (
+        <section className="relative overflow-hidden rounded-3xl p-5 border border-rose-500/30 bg-gradient-to-br from-rose-950/40 via-neutral-900/60 to-black/80 backdrop-blur-xl shadow-2xl">
+          <div className="flex justify-between items-center mb-3">
+            <span className="text-[10px] uppercase font-mono tracking-widest text-rose-300/80 flex items-center gap-1.5">
+              <span className="w-1.5 h-1.5 rounded-full bg-rose-400 animate-ping"></span>
+              A Mi Történetünk
+            </span>
+            <span className="text-xs">❤️</span>
+          </div>
+
+          <div className="grid grid-cols-4 gap-2 text-center">
+            <div className="p-2.5 rounded-2xl bg-black/40 border border-neutral-800/80 flex flex-col">
+              <span className="font-mono text-xl font-bold text-rose-200">{elapsed.days}</span>
+              <span className="text-[9px] uppercase font-mono text-neutral-400 mt-0.5">Napja</span>
+            </div>
+            <div className="p-2.5 rounded-2xl bg-black/40 border border-neutral-800/80 flex flex-col">
+              <span className="font-mono text-xl font-bold text-neutral-200">{elapsed.hours}</span>
+              <span className="text-[9px] uppercase font-mono text-neutral-400 mt-0.5">Órája</span>
+            </div>
+            <div className="p-2.5 rounded-2xl bg-black/40 border border-neutral-800/80 flex flex-col">
+              <span className="font-mono text-xl font-bold text-neutral-200">{elapsed.minutes}</span>
+              <span className="text-[9px] uppercase font-mono text-neutral-400 mt-0.5">Perce</span>
+            </div>
+            <div className="p-2.5 rounded-2xl bg-black/40 border border-neutral-800/80 flex flex-col">
+              <span className="font-mono text-xl font-bold text-amber-300">{elapsed.seconds}</span>
+              <span className="text-[9px] uppercase font-mono text-neutral-400 mt-0.5">Mp</span>
+            </div>
+          </div>
+          
+          <div className="mt-3 text-center">
+            <p className="text-[11px] text-neutral-400 font-serif italic">
+              „Minden egyes másodperc veled számít.”
+            </p>
+          </div>
+        </section>
+      );
+    }
 
     // Scratch Card Komponens
     function ScratchCard({ text }) {
@@ -56,7 +121,6 @@
         const width = canvas.width = canvas.offsetWidth;
         const height = canvas.height = canvas.offsetHeight;
 
-        // Arany-bronz kaparós réteg felrajzolása
         const gradient = ctx.createLinearGradient(0, 0, width, height);
         gradient.addColorStop(0, '#785428');
         gradient.addColorStop(0.5, '#d4af37');
@@ -86,9 +150,7 @@
           ctx.fill();
 
           points++;
-          if (points > 35) {
-            setScratched(true);
-          }
+          if (points > 35) setScratched(true);
         };
 
         const start = () => { isDrawing = true; };
@@ -137,27 +199,31 @@
       const [loading, setLoading] = useState(true);
       const [submitting, setSubmitting] = useState(false);
 
+      // Bakancslista állapotok
+      const [bucketList, setBucketList] = useState([]);
+      const [newBucketTitle, setNewBucketTitle] = useState('');
+      const [uploadingBucketId, setUploadingBucketId] = useState(null);
+      const bucketFileInputRef = useRef(null);
+
+      // Kapszula & bökdösés
       const [capsule, setCapsule] = useState(null);
       const [uploadingPhoto, setUploadingPhoto] = useState(false);
       const [nudged, setNudged] = useState(false);
-      const [nightMessage, setNightMessage] = useState('');
-      const [nightNotes, setNightNotes] = useState([]);
       const fileInputRef = useRef(null);
-
-      // Éjszakai bagoly időablak: 22:00 és 05:00 között
-      const currentHour = new Date().getHours();
-      const isNightTime = currentHour >= 22 || currentHour < 5;
 
       useEffect(() => {
         calculateTodayDay();
         loadData();
         loadCapsule();
-        loadNightNotes();
+        loadBucketList();
 
         const channel = supabase
-          .channel('realtime_stream')
+          .channel('realtime_main')
           .on('postgres_changes', { event: '*', schema: 'public', table: 'answers' }, () => {
             loadAnswers(currentDay);
+          })
+          .on('postgres_changes', { event: '*', schema: 'public', table: 'bucket_list' }, () => {
+            loadBucketList();
           })
           .on('postgres_changes', { event: '*', schema: 'public', table: 'time_capsule' }, () => {
             loadCapsule();
@@ -168,17 +234,12 @@
               setTimeout(() => setNudged(false), 5000);
             }
           })
-          .on('postgres_changes', { event: '*', schema: 'public', table: 'night_notes' }, () => {
-            loadNightNotes();
-          })
           .subscribe();
 
         return () => supabase.removeChannel(channel);
       }, [currentDay]);
 
-      // Napi feloldási kalkulátor
       const calculateTodayDay = () => {
-        // Kezdődátum rögzítése: ma
         const startDateKey = 'kapszula_start_date';
         let startDate = localStorage.getItem(startDateKey);
         if (!startDate) {
@@ -204,6 +265,14 @@
         setLoading(false);
       };
 
+      const loadBucketList = async () => {
+        const { data } = await supabase
+          .from('bucket_list')
+          .select('*')
+          .order('id', { ascending: false });
+        if (data) setBucketList(data);
+      };
+
       const loadCapsule = async () => {
         const { data } = await supabase
           .from('time_capsule')
@@ -211,17 +280,7 @@
           .order('created_at', { ascending: false })
           .limit(1)
           .maybeSingle();
-
         if (data) setCapsule(data);
-      };
-
-      const loadNightNotes = async () => {
-        const { data } = await supabase
-          .from('night_notes')
-          .select('*')
-          .order('created_at', { ascending: false })
-          .limit(3);
-        if (data) setNightNotes(data);
       };
 
       const loadAnswers = async (dayIdx, qList = questions) => {
@@ -258,24 +317,75 @@
 
         if (!error) {
           setInputText('');
-          if (window.confetti) {
-            window.confetti({ particleCount: 75, spread: 65, origin: { y: 0.7 } });
-          }
+          if (window.confetti) window.confetti({ particleCount: 70, spread: 60 });
           await loadAnswers(currentDay);
         }
         setSubmitting(false);
       };
 
-      const handleNudge = async () => {
-        await supabase.from('nudges').insert({ from_user: currentUser });
-        alert('Megbökve! Értesítést kapott a felületén ✨');
+      // Bakancslista új tétel
+      const handleAddBucketItem = async () => {
+        if (!newBucketTitle.trim()) return;
+        await supabase.from('bucket_list').insert({
+          created_by: currentUser,
+          title: newBucketTitle.trim(),
+          completed: false
+        });
+        setNewBucketTitle('');
+        loadBucketList();
       };
 
-      const handleSendNightNote = async () => {
-        if (!nightMessage.trim()) return;
-        await supabase.from('night_notes').insert({ from_user: currentUser, message: nightMessage.trim() });
-        setNightMessage('');
-        loadNightNotes();
+      // Bakancslista pipálás
+      const handleToggleBucket = async (item) => {
+        const nextState = !item.completed;
+        await supabase.from('bucket_list').update({
+          completed: nextState,
+          completed_at: nextState ? new Date().toISOString() : null
+        }).eq('id', item.id);
+
+        if (nextState && window.confetti) {
+          window.confetti({ particleCount: 60, spread: 50, origin: { y: 0.6 } });
+        }
+        loadBucketList();
+      };
+
+      // Bakancslista képfeltöltés
+      const handleBucketPhotoUpload = async (event) => {
+        const file = event.target.files[0];
+        if (!file || !uploadingBucketId) return;
+
+        try {
+          const fileExt = file.name.split('.').pop() || 'jpg';
+          const fileName = `bucket_${uploadingBucketId}_${Date.now()}.${fileExt}`;
+
+          const { error: uploadError } = await supabase.storage
+            .from('capsule-photos')
+            .upload(fileName, file, { cacheControl: '3600', upsert: true });
+
+          if (uploadError) throw uploadError;
+
+          const { data: { publicUrl } } = supabase.storage
+            .from('capsule-photos')
+            .getPublicUrl(fileName);
+
+          await supabase.from('bucket_list').update({
+            photo_url: publicUrl,
+            completed: true,
+            completed_at: new Date().toISOString()
+          }).eq('id', uploadingBucketId);
+
+          if (window.confetti) window.confetti({ particleCount: 80, spread: 70 });
+          loadBucketList();
+        } catch (err) {
+          alert('Hiba a fotó mentésekor: ' + err.message);
+        } finally {
+          setUploadingBucketId(null);
+        }
+      };
+
+      const handleNudge = async () => {
+        await supabase.from('nudges').insert({ from_user: currentUser });
+        alert('🐾 Megbökve! Értesítést kapott.');
       };
 
       const handleFileUpload = async (event) => {
@@ -286,17 +396,16 @@
         try {
           const fileExt = file.name.split('.').pop() || 'jpg';
           const fileName = `${Date.now()}_${currentUser}.${fileExt}`;
-          const filePath = `${fileName}`;
 
           const { error: uploadError } = await supabase.storage
             .from('capsule-photos')
-            .upload(filePath, file, { cacheControl: '3600', upsert: true });
+            .upload(fileName, file, { cacheControl: '3600', upsert: true });
 
           if (uploadError) throw uploadError;
 
           const { data: { publicUrl } } = supabase.storage
             .from('capsule-photos')
-            .getPublicUrl(filePath);
+            .getPublicUrl(fileName);
 
           const unlock = new Date();
           unlock.setDate(unlock.getDate() + 7);
@@ -339,7 +448,7 @@
             {/* Fejléc */}
             <header className="flex justify-between items-center border-b border-neutral-800/80 pb-4">
               <div className="flex items-center gap-2">
-                <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse"></span>
+                <span className="h-2 w-2 rounded-full bg-rose-500 animate-pulse"></span>
                 <span className="text-[11px] uppercase tracking-widest text-neutral-400 font-mono">Privát Kapszula</span>
               </div>
               <div className="text-xs px-3 py-1 rounded-full bg-neutral-900 border border-neutral-800 text-neutral-300 font-mono">
@@ -347,7 +456,7 @@
               </div>
             </header>
 
-            {/* Bökdösés riasztás */}
+            {/* Bökdösés jelzés */}
             {nudged && (
               <div className="p-3 bg-rose-500/20 border border-rose-500/40 rounded-2xl text-xs text-rose-200 flex items-center justify-between animate-shake">
                 <span>🐾 Hé! Valaki épp türelmetlenül várja a válaszodat!</span>
@@ -355,7 +464,96 @@
               </div>
             )}
 
-            {/* Napválasztó & Zárolás Info */}
+            {/* 1. ÉVFORDULÓ SZÁMLÁLÓ */}
+            <LoveTimer />
+
+            {/* 2. RANDI BAKANCSLISTA SZEKCIÓ */}
+            <section className="p-5 rounded-3xl border border-neutral-800/90 bg-gradient-to-b from-neutral-900/60 to-black/70 flex flex-col gap-4">
+              <div className="flex justify-between items-center">
+                <div className="flex items-center gap-2 text-xs font-mono text-amber-400 uppercase tracking-wider">
+                  <span>✨ KÖZÖS BAKANCSLISTA</span>
+                </div>
+                <span className="text-[11px] font-mono text-neutral-500">
+                  {bucketList.filter(b => b.completed).length} / {bucketList.length} kész
+                </span>
+              </div>
+
+              {/* Új cél hozzáadása */}
+              <div className="flex gap-2">
+                <input 
+                  type="text"
+                  value={newBucketTitle}
+                  onChange={(e) => setNewBucketTitle(e.target.value)}
+                  placeholder="Új közös terv (pl. Csillagnézés)..."
+                  className="flex-1 bg-neutral-950 border border-neutral-800 rounded-xl px-3.5 py-2 text-xs text-neutral-200 placeholder:text-neutral-600 focus:outline-none focus:border-amber-400/50"
+                />
+                <button 
+                  onClick={handleAddBucketItem}
+                  className="px-3.5 py-2 bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 rounded-xl text-xs font-medium text-amber-200 active:scale-95 transition"
+                >
+                  + Hozzáadás
+                </button>
+              </div>
+
+              {/* Rejtett fájlválasztó a bakancslista képeihez */}
+              <input 
+                type="file" 
+                accept="image/*" 
+                ref={bucketFileInputRef} 
+                onChange={handleBucketPhotoUpload} 
+                className="hidden" 
+              />
+
+              {/* Bakancslista elemek listája */}
+              <div className="flex flex-col gap-2.5 max-h-80 overflow-y-auto pr-1">
+                {bucketList.map(item => (
+                  <div 
+                    key={item.id} 
+                    className={`p-3 rounded-2xl border transition-all ${
+                      item.completed 
+                        ? 'bg-emerald-950/20 border-emerald-500/30 text-neutral-300' 
+                        : 'bg-neutral-900/40 border-neutral-800 text-neutral-200'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between gap-3">
+                      <button 
+                        onClick={() => handleToggleBucket(item)}
+                        className={`w-6 h-6 rounded-lg flex items-center justify-center border transition ${
+                          item.completed 
+                            ? 'bg-emerald-500 border-emerald-400 text-black font-bold text-xs' 
+                            : 'border-neutral-700 bg-neutral-950 hover:border-neutral-500'
+                        }`}
+                      >
+                        {item.completed && '✓'}
+                      </button>
+
+                      <span className={`flex-1 text-xs leading-relaxed ${item.completed ? 'line-through text-neutral-500' : ''}`}>
+                        {item.title}
+                      </span>
+
+                      {/* Fotó feltöltés gomb vagy fotó miniatűr */}
+                      {item.photo_url ? (
+                        <a href={item.photo_url} target="_blank" rel="noreferrer" className="shrink-0">
+                          <img src={item.photo_url} alt="Emlék" className="w-9 h-9 object-cover rounded-lg border border-amber-500/40 shadow" />
+                        </a>
+                      ) : (
+                        <button
+                          onClick={() => {
+                            setUploadingBucketId(item.id);
+                            bucketFileInputRef.current && bucketFileInputRef.current.click();
+                          }}
+                          className="shrink-0 p-1.5 px-2 bg-neutral-800 hover:bg-neutral-700 rounded-lg text-[10px] text-neutral-300 flex items-center gap-1 border border-neutral-700"
+                        >
+                          📷 Kép
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </section>
+
+            {/* Napválasztó */}
             <nav className="flex items-center justify-between bg-neutral-900/50 p-2 rounded-2xl border border-neutral-800/60">
               <button 
                 onClick={() => {
@@ -376,7 +574,7 @@
                   {currentDay}. Nap {currentDay === todayUnlockedDay ? '(Mai nap ✨)' : ''}
                 </span>
                 {currentDay > todayUnlockedDay && (
-                  <span className="text-[9px] text-neutral-500 font-mono">Zárolva holnap reggelig</span>
+                  <span className="text-[9px] text-neutral-500 font-mono">Zárolva holnapig</span>
                 )}
               </div>
 
@@ -472,7 +670,7 @@
                 </p>
               </div>
 
-              {/* Partner válasza kaparós sorsjegy formában */}
+              {/* Partner válasza kaparós formában */}
               <div className="p-4 rounded-2xl bg-neutral-900/30 border border-neutral-800/70 relative">
                 <div className="flex justify-between items-center mb-2">
                   <span className="text-[11px] text-neutral-400 font-mono">
@@ -504,41 +702,7 @@
               </div>
             </section>
 
-            {/* Éjszakai Bagoly szekció (csak 22:00 - 05:00 között) */}
-            {isNightTime && (
-              <section className="p-4 rounded-3xl border border-indigo-900/40 bg-gradient-to-b from-indigo-950/30 to-black/70 flex flex-col gap-3">
-                <div className="flex items-center gap-2 text-xs font-mono text-indigo-300">
-                  <span>🌙 ÉJSZAKAI ÜZENŐFAL</span>
-                  <span className="text-[10px] text-neutral-500">Még ébren vagy?</span>
-                </div>
-                <div className="flex gap-2">
-                  <input 
-                    type="text"
-                    value={nightMessage}
-                    onChange={(e) => setNightMessage(e.target.value)}
-                    placeholder="Hagyj egy éjszakai gondolatot..."
-                    className="flex-1 bg-neutral-950 border border-neutral-800 rounded-xl px-3 py-2 text-xs text-neutral-200 focus:outline-none focus:border-indigo-500"
-                  />
-                  <button 
-                    onClick={handleSendNightNote}
-                    className="px-3 py-2 bg-indigo-600/30 hover:bg-indigo-600/50 border border-indigo-500/40 rounded-xl text-xs text-indigo-200 font-medium active:scale-95"
-                  >
-                    Küldés
-                  </button>
-                </div>
-                {nightNotes.length > 0 && (
-                  <div className="flex flex-col gap-1.5 mt-1">
-                    {nightNotes.map(n => (
-                      <div key={n.id} className="text-[11px] text-neutral-300 bg-neutral-900/40 p-2 rounded-lg border border-neutral-800/40">
-                        <strong className="text-indigo-300">{n.from_user === 'me' ? 'Én' : 'Detti'}:</strong> {n.message}
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </section>
-            )}
-
-            {/* POLAROID IDŐKAPSZULA SZEKCIÓ */}
+            {/* POLAROID IDŐKAPSZULA */}
             <footer className="mt-4 p-5 rounded-3xl border border-neutral-800/80 bg-gradient-to-b from-neutral-900/60 to-black/80 flex flex-col items-center gap-4 text-center">
               <div className="flex items-center gap-2 text-xs font-mono text-amber-400/90 tracking-wider">
                 <span>⏳ KÖZÖS IDŐKAPSZULA</span>
@@ -547,7 +711,6 @@
               {capsule ? (
                 <div className="w-full flex flex-col items-center gap-3">
                   {isCapsuleUnlocked ? (
-                    /* Feloldott Polaroid fotó */
                     <div className="bg-neutral-100 text-neutral-900 p-3 pb-5 rounded-lg shadow-2xl rotate-[-2deg] transition hover:rotate-0 max-w-[260px]">
                       <img src={capsule.photo_url} alt="Kapszula" className="w-full h-52 object-cover rounded" />
                       <div className="font-hand text-xl mt-3 text-center text-neutral-800">
@@ -555,7 +718,6 @@
                       </div>
                     </div>
                   ) : (
-                    /* Zárolt lefordított Polaroid fotó */
                     <div className="bg-neutral-900 border-2 border-neutral-800 p-4 pb-6 rounded-xl shadow-2xl rotate-[1deg] max-w-[240px] flex flex-col items-center gap-3">
                       <div className="w-44 h-44 bg-neutral-950 border border-neutral-800/80 rounded flex flex-col items-center justify-center p-3 text-center gap-2">
                         <span className="text-3xl">🔒</span>

@@ -45,11 +45,19 @@
     const SUPABASE_URL = "https://jpbzlvfxrkmiazaeanaw.supabase.co";
     const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImpwYnpsdmZ4cmttaWF6YWVhbmF3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTMzNjIxMTMsImV4cCI6MjEwODkzODExM30.dMvV3SoUvUyuZSvn2omHvhoF5Yy9pMCJdpIsJun5rDE";
 
-    // === ITT ÁLLÍTSD BE A PONTOS DÁTUMOT, AMIKORTÓL EGYÜTT VAGYTOK ===
-    // Formátum: "ÉÉÉÉ-HH-NNTÓÓ:PP:MM" (pl. "2026-10-31T15:00:00")
+    // Kapcsolat kezdete
     const RELATIONSHIP_START_DATE = "2026-10-31T15:00:00";
 
     const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+    // Naptári nap pontos kalkulációja helyi éjfél szerint (2026. nov. 1. = 1. nap)
+    const getTodayIndex = () => {
+      const start = new Date(2026, 10, 1); // nov. 1 helyi idő szerint
+      const now = new Date();
+      const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      const diffDays = Math.round((today - start) / (1000 * 60 * 60 * 24)) + 1;
+      return Math.max(1, diffDays);
+    };
 
     // Élő Évforduló Számláló Komponens
     function LoveTimer() {
@@ -105,7 +113,7 @@
           
           <div className="mt-3 text-center">
             <p className="text-[11px] text-neutral-400 font-serif italic">
-              
+              „Minden egyes másodperc veled számít.”
             </p>
           </div>
         </section>
@@ -171,7 +179,7 @@
           window.removeEventListener('mouseup', stop);
           window.removeEventListener('touchend', stop);
         };
-      }, []);
+      }, [text]);
 
       return (
         <div className="relative min-h-[90px] rounded-2xl overflow-hidden flex items-center justify-center p-4 bg-neutral-900/60 border border-neutral-800">
@@ -194,9 +202,12 @@
       const currentUser = userParam === 'detticica' ? 'detticica' : 'me';
       const partnerUser = currentUser === 'me' ? 'detticica' : 'me';
 
+      // Kezdőértékek: rögtön a valós mai nap (pl. 2), nem 1!
+      const initialToday = getTodayIndex();
+      const [todayUnlockedDay, setTodayUnlockedDay] = useState(initialToday);
+      const [currentDay, setCurrentDay] = useState(initialToday);
+
       const [questions, setQuestions] = useState([]);
-      const [currentDay, setCurrentDay] = useState(1);
-      const [todayUnlockedDay, setTodayUnlockedDay] = useState(1);
       const [answers, setAnswers] = useState({ me: null, detticica: null });
       const [inputText, setInputText] = useState('');
       const [loading, setLoading] = useState(true);
@@ -214,24 +225,26 @@
       const [nudged, setNudged] = useState(false);
       const fileInputRef = useRef(null);
 
+      // 1. Általános adatok betöltése egyszerre + Realtime csatorna
       useEffect(() => {
-        calculateTodayDay();
-        loadData();
+        loadInitialData();
         loadCapsule();
         loadBucketList();
-      
-        // Amikor visszatérsz az appba (pl. feloldod a képernyőt másnap reggel)
+
+        // Amikor feloldja a telefont vagy visszatér az appba
         const handleVisibilityChange = () => {
           if (!document.hidden) {
-            calculateTodayDay();
+            const freshToday = getTodayIndex();
+            setTodayUnlockedDay(freshToday);
+            setCurrentDay(prev => Math.max(prev, freshToday));
           }
         };
         document.addEventListener('visibilitychange', handleVisibilityChange);
-      
+
         const channel = supabase
           .channel('realtime_main')
           .on('postgres_changes', { event: '*', schema: 'public', table: 'answers' }, () => {
-            loadAnswers(currentDay);
+            fetchAnswersForDay(currentDay);
           })
           .on('postgres_changes', { event: '*', schema: 'public', table: 'bucket_list' }, () => {
             loadBucketList();
@@ -246,25 +259,14 @@
             }
           })
           .subscribe();
-      
+
         return () => {
           document.removeEventListener('visibilitychange', handleVisibilityChange);
           supabase.removeChannel(channel);
         };
-      }, [currentDay]);
+      }, []);
 
-      // ÚJ: FIX INDULÁS MÁTÓL
-      const calculateTodayDay = () => {
-        const startDate = new Date('2026-11-01T00:00:00');
-        const now = new Date();
-        const diffTime = Math.max(0, now - startDate);
-        const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24)) + 1;
-        const currentActive = Math.max(1, diffDays);
-        setTodayUnlockedDay(currentActive);
-        setCurrentDay(currentActive);
-      };
-
-      const loadData = async () => {
+      const loadInitialData = async () => {
         const { data: qData } = await supabase
           .from('questions')
           .select('*')
@@ -272,9 +274,61 @@
 
         if (qData && qData.length > 0) {
           setQuestions(qData);
-          await loadAnswers(currentDay, qData);
         }
         setLoading(false);
+      };
+
+      // 2. Válaszok szigorúan versengésmentes (Race-Condition mentes) betöltése a kiválasztott naphoz
+      useEffect(() => {
+        if (!questions || questions.length === 0) return;
+        let isCurrent = true;
+
+        const fetchAnswers = async () => {
+          const activeQ = questions.find(q => q.day_index === currentDay);
+          if (!activeQ) return;
+
+          const { data: aData } = await supabase
+            .from('answers')
+            .select('*')
+            .eq('question_id', activeQ.id);
+
+          // Ha időközben átváltott a nap, eldobja a késve érkező választ!
+          if (!isCurrent) return;
+
+          const mapped = { me: null, detticica: null };
+          if (aData) {
+            aData.forEach(row => {
+              if (row.user_tag === 'me') mapped.me = row.answer_text;
+              if (row.user_tag === 'detticica') mapped.detticica = row.answer_text;
+            });
+          }
+          setAnswers(mapped);
+        };
+
+        fetchAnswers();
+
+        return () => {
+          isCurrent = false; // Régi lekérés azonnali tiltása
+        };
+      }, [currentDay, questions]);
+
+      const fetchAnswersForDay = async (dayIdx) => {
+        const activeQ = questions.find(q => q.day_index === dayIdx);
+        if (!activeQ) return;
+
+        const { data: aData } = await supabase
+          .from('answers')
+          .select('*')
+          .eq('question_id', activeQ.id);
+
+        const mapped = { me: null, detticica: null };
+        if (aData) {
+          aData.forEach(row => {
+            if (row.user_tag === 'me') mapped.me = row.answer_text;
+            if (row.user_tag === 'detticica') mapped.detticica = row.answer_text;
+          });
+        }
+        setAnswers(mapped);
       };
 
       const loadBucketList = async () => {
@@ -295,25 +349,6 @@
         if (data) setCapsule(data);
       };
 
-      const loadAnswers = async (dayIdx, qList = questions) => {
-        const activeQ = qList.find(q => q.day_index === dayIdx) || questions.find(q => q.day_index === dayIdx);
-        if (!activeQ) return;
-
-        const { data: aData } = await supabase
-          .from('answers')
-          .select('*')
-          .eq('question_id', activeQ.id);
-
-        const mapped = { me: null, detticica: null };
-        if (aData) {
-          aData.forEach(row => {
-            if (row.user_tag === 'me') mapped.me = row.answer_text;
-            if (row.user_tag === 'detticica') mapped.detticica = row.answer_text;
-          });
-        }
-        setAnswers(mapped);
-      };
-
       const handleSendAnswer = async () => {
         if (!inputText.trim() || submitting) return;
         setSubmitting(true);
@@ -330,7 +365,7 @@
         if (!error) {
           setInputText('');
           if (window.confetti) window.confetti({ particleCount: 70, spread: 60 });
-          await loadAnswers(currentDay);
+          await fetchAnswersForDay(currentDay);
         }
         setSubmitting(false);
       };
@@ -570,9 +605,7 @@
               <button 
                 onClick={() => {
                   if (currentDay > 1) {
-                    const newDay = currentDay - 1;
-                    setCurrentDay(newDay);
-                    loadAnswers(newDay);
+                    setCurrentDay(prev => prev - 1);
                   }
                 }}
                 disabled={currentDay === 1}
@@ -593,9 +626,7 @@
               <button 
                 onClick={() => {
                   if (currentDay < todayUnlockedDay && currentDay < questions.length) {
-                    const newDay = currentDay + 1;
-                    setCurrentDay(newDay);
-                    loadAnswers(newDay);
+                    setCurrentDay(prev => prev + 1);
                   }
                 }}
                 disabled={currentDay >= todayUnlockedDay || currentDay >= questions.length}

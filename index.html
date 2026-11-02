@@ -50,9 +50,9 @@
 
     const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-    // Naptári nap pontos kalkulációja helyi éjfél szerint (2026. nov. 1. = 1. nap)
+    // Naptári nap kalkuláció helyi éjfél szerint (2026. nov. 1. = 1. nap)
     const getTodayIndex = () => {
-      const start = new Date(2026, 10, 1); // nov. 1 helyi idő szerint
+      const start = new Date(2026, 10, 1);
       const now = new Date();
       const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
       const diffDays = Math.round((today - start) / (1000 * 60 * 60 * 24)) + 1;
@@ -202,7 +202,6 @@
       const currentUser = userParam === 'detticica' ? 'detticica' : 'me';
       const partnerUser = currentUser === 'me' ? 'detticica' : 'me';
 
-      // Kezdőértékek: rögtön a valós mai nap (pl. 2), nem 1!
       const initialToday = getTodayIndex();
       const [todayUnlockedDay, setTodayUnlockedDay] = useState(initialToday);
       const [currentDay, setCurrentDay] = useState(initialToday);
@@ -213,25 +212,23 @@
       const [loading, setLoading] = useState(true);
       const [submitting, setSubmitting] = useState(false);
 
-      // Bakancslista állapotok
+      // Bakancslista
       const [bucketList, setBucketList] = useState([]);
       const [newBucketTitle, setNewBucketTitle] = useState('');
       const [uploadingBucketId, setUploadingBucketId] = useState(null);
       const bucketFileInputRef = useRef(null);
 
-      // Kapszula & bökdösés
-      const [capsule, setCapsule] = useState(null);
+      // Időkapszulák (több kép kezelése)
+      const [capsules, setCapsules] = useState([]);
       const [uploadingPhoto, setUploadingPhoto] = useState(false);
       const [nudged, setNudged] = useState(false);
       const fileInputRef = useRef(null);
 
-      // 1. Általános adatok betöltése egyszerre + Realtime csatorna
       useEffect(() => {
         loadInitialData();
-        loadCapsule();
+        loadCapsules();
         loadBucketList();
 
-        // Amikor feloldja a telefont vagy visszatér az appba
         const handleVisibilityChange = () => {
           if (!document.hidden) {
             const freshToday = getTodayIndex();
@@ -250,7 +247,7 @@
             loadBucketList();
           })
           .on('postgres_changes', { event: '*', schema: 'public', table: 'time_capsule' }, () => {
-            loadCapsule();
+            loadCapsules();
           })
           .on('postgres_changes', { event: '*', schema: 'public', table: 'nudges' }, (payload) => {
             if (payload.new.from_user !== currentUser) {
@@ -278,7 +275,6 @@
         setLoading(false);
       };
 
-      // 2. Válaszok szigorúan versengésmentes (Race-Condition mentes) betöltése a kiválasztott naphoz
       useEffect(() => {
         if (!questions || questions.length === 0) return;
         let isCurrent = true;
@@ -292,7 +288,6 @@
             .select('*')
             .eq('question_id', activeQ.id);
 
-          // Ha időközben átváltott a nap, eldobja a késve érkező választ!
           if (!isCurrent) return;
 
           const mapped = { me: null, detticica: null };
@@ -308,7 +303,7 @@
         fetchAnswers();
 
         return () => {
-          isCurrent = false; // Régi lekérés azonnali tiltása
+          isCurrent = false;
         };
       }, [currentDay, questions]);
 
@@ -339,14 +334,13 @@
         if (data) setBucketList(data);
       };
 
-      const loadCapsule = async () => {
+      // Az összes kapszula lekérése időrendben
+      const loadCapsules = async () => {
         const { data } = await supabase
           .from('time_capsule')
           .select('*')
-          .order('created_at', { ascending: false })
-          .limit(1)
-          .maybeSingle();
-        if (data) setCapsule(data);
+          .order('created_at', { ascending: false });
+        if (data) setCapsules(data);
       };
 
       const handleSendAnswer = async () => {
@@ -370,7 +364,6 @@
         setSubmitting(false);
       };
 
-      // Bakancslista új tétel
       const handleAddBucketItem = async () => {
         if (!newBucketTitle.trim()) return;
         await supabase.from('bucket_list').insert({
@@ -382,7 +375,6 @@
         loadBucketList();
       };
 
-      // Bakancslista pipálás
       const handleToggleBucket = async (item) => {
         const nextState = !item.completed;
         await supabase.from('bucket_list').update({
@@ -396,7 +388,6 @@
         loadBucketList();
       };
 
-      // Bakancslista képfeltöltés
       const handleBucketPhotoUpload = async (event) => {
         const file = event.target.files[0];
         if (!file || !uploadingBucketId) return;
@@ -454,6 +445,7 @@
             .from('capsule-photos')
             .getPublicUrl(fileName);
 
+          // 7 napos lezárás
           const unlock = new Date();
           unlock.setDate(unlock.getDate() + 7);
           const unlockDateStr = unlock.toISOString().split('T')[0];
@@ -461,16 +453,17 @@
           await supabase.from('time_capsule').insert({
             user_tag: currentUser,
             photo_url: publicUrl,
-            message: 'Egy titkos emlék kettőnknek :)',
+            message: currentUser === 'me' ? 'Egy titkos emlék tőlem :)' : 'Egy titkos emlék Dettitől :)',
             unlock_date: unlockDateStr
           });
 
           if (window.confetti) window.confetti({ particleCount: 90, spread: 80 });
-          await loadCapsule();
+          await loadCapsules();
         } catch (err) {
           alert('Hiba a feltöltésnél: ' + err.message);
         } finally {
           setUploadingPhoto(false);
+          if (fileInputRef.current) fileInputRef.current.value = '';
         }
       };
 
@@ -486,7 +479,6 @@
       const myAnswer = answers[currentUser];
       const partnerAnswer = answers[partnerUser];
       const isBothAnswered = Boolean(myAnswer && partnerAnswer);
-      const isCapsuleUnlocked = capsule && new Date(capsule.unlock_date) <= new Date();
 
       return (
         <div className="min-h-screen bg-[#08080a] text-neutral-100 flex justify-center px-4 py-8">
@@ -503,7 +495,7 @@
               </div>
             </header>
 
-            {/* Bökdösés jelzés */}
+            {/* Bökdösés riasztás */}
             {nudged && (
               <div className="p-3 bg-rose-500/20 border border-rose-500/40 rounded-2xl text-xs text-rose-200 flex items-center justify-between animate-shake">
                 <span>🐾 Hé! Valaki épp türelmetlenül várja a válaszodat!</span>
@@ -542,7 +534,6 @@
                 </button>
               </div>
 
-              {/* Rejtett fájlválasztó a bakancslista képeihez */}
               <input 
                 type="file" 
                 accept="image/*" 
@@ -578,7 +569,6 @@
                         {item.title}
                       </span>
 
-                      {/* Fotó feltöltés gomb vagy fotó miniatűr */}
                       {item.photo_url ? (
                         <a href={item.photo_url} target="_blank" rel="noreferrer" className="shrink-0">
                           <img src={item.photo_url} alt="Emlék" className="w-9 h-9 object-cover rounded-lg border border-amber-500/40 shadow" />
@@ -745,55 +735,84 @@
               </div>
             </section>
 
-            {/* POLAROID IDŐKAPSZULA */}
-            <footer className="mt-4 p-5 rounded-3xl border border-neutral-800/80 bg-gradient-to-b from-neutral-900/60 to-black/80 flex flex-col items-center gap-4 text-center">
-              <div className="flex items-center gap-2 text-xs font-mono text-amber-400/90 tracking-wider">
-                <span>⏳ KÖZÖS IDŐKAPSZULA</span>
+            {/* KÖZÖS IDŐKAPSZULA - TÖBB ELEMES POLAROID FAL */}
+            <footer className="mt-4 p-5 rounded-3xl border border-neutral-800/80 bg-gradient-to-b from-neutral-900/60 to-black/80 flex flex-col items-center gap-5 text-center">
+              <div className="w-full flex items-center justify-between border-b border-neutral-800/70 pb-3">
+                <div className="flex items-center gap-2 text-xs font-mono text-amber-400/90 tracking-wider">
+                  <span>⏳ KÖZÖS IDŐKAPSZULÁK</span>
+                </div>
+                <span className="text-[10px] font-mono text-neutral-500">
+                  {capsules.length} fénykép elzárva
+                </span>
               </div>
 
-              {capsule ? (
-                <div className="w-full flex flex-col items-center gap-3">
-                  {isCapsuleUnlocked ? (
-                    <div className="bg-neutral-100 text-neutral-900 p-3 pb-5 rounded-lg shadow-2xl rotate-[-2deg] transition hover:rotate-0 max-w-[260px]">
-                      <img src={capsule.photo_url} alt="Kapszula" className="w-full h-52 object-cover rounded" />
-                      <div className="font-hand text-xl mt-3 text-center text-neutral-800">
-                        {capsule.message}
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="bg-neutral-900 border-2 border-neutral-800 p-4 pb-6 rounded-xl shadow-2xl rotate-[1deg] max-w-[240px] flex flex-col items-center gap-3">
-                      <div className="w-44 h-44 bg-neutral-950 border border-neutral-800/80 rounded flex flex-col items-center justify-center p-3 text-center gap-2">
-                        <span className="text-3xl">🔒</span>
-                        <span className="text-[10px] font-mono text-amber-400/90">Lakat alatt</span>
-                      </div>
-                      <div className="font-hand text-base text-neutral-400">
-                        Felnyitás: {capsule.unlock_date}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              ) : (
-                <div className="flex flex-col items-center gap-3 w-full">
-                  <p className="text-xs text-neutral-300 max-w-xs leading-relaxed italic">
-                    „Tölts fel egy képet bármiről, ami tetszene a másiknak (magadról :))”
-                  </p>
-                  
-                  <input 
-                    type="file" 
-                    accept="image/*" 
-                    ref={fileInputRef} 
-                    onChange={handleFileUpload} 
-                    className="hidden" 
-                  />
+              {/* Mindig elérhető Feltöltés gomb */}
+              <div className="w-full flex flex-col items-center gap-2 bg-neutral-950/40 p-4 rounded-2xl border border-neutral-800/60">
+                <p className="text-xs text-neutral-300 max-w-xs leading-relaxed italic">
+                  „Tölts fel egy képet bármiről, ami tetszene a másiknak (magadról :))”
+                </p>
+                
+                <input 
+                  type="file" 
+                  accept="image/*" 
+                  ref={fileInputRef} 
+                  onChange={handleFileUpload} 
+                  className="hidden" 
+                />
 
-                  <button
-                    onClick={() => fileInputRef.current && fileInputRef.current.click()}
-                    disabled={uploadingPhoto}
-                    className="px-5 py-2.5 bg-gradient-to-r from-neutral-800 to-neutral-900 hover:from-neutral-700 hover:to-neutral-800 border border-neutral-700 rounded-xl text-xs font-medium text-neutral-200 flex items-center gap-2 transition active:scale-95 disabled:opacity-50 shadow-lg"
-                  >
-                    <span>📷</span>
-                    <span>{uploadingPhoto ? "Feltöltés..." : "Kép elrejtése a kapszulába"}</span>
-                  </button>
+                <button
+                  onClick={() => fileInputRef.current && fileInputRef.current.click()}
+                  disabled={uploadingPhoto}
+                  className="mt-1 px-5 py-2.5 bg-gradient-to-r from-neutral-800 to-neutral-900 hover:from-neutral-700 hover:to-neutral-800 border border-neutral-700 rounded-xl text-xs font-medium text-neutral-200 flex items-center gap-2 transition active:scale-95 disabled:opacity-50 shadow-lg"
+                >
+                  <span>📷</span>
+                  <span>{uploadingPhoto ? "Feltöltés..." : "+ Új titkos kép elrejtése"}</span>
+                </button>
+                <span className="text-[10px] text-neutral-500 font-mono">1 hétig lakat alatt marad</span>
+              </div>
+
+              {/* Elrejtett és kinyílt Polaroid képek listája */}
+              {capsules.length > 0 && (
+                <div className="w-full flex flex-col items-center gap-5 pt-2">
+                  {capsules.map((cap) => {
+                    const isUnlocked = new Date(cap.unlock_date) <= new Date();
+                    const isUploader = cap.user_tag === currentUser;
+
+                    return (
+                      <div key={cap.id} className="w-full flex flex-col items-center">
+                        {isUnlocked ? (
+                          /* Nyitott Polaroid fotó */
+                          <div className="bg-neutral-100 text-neutral-900 p-3 pb-5 rounded-lg shadow-2xl rotate-[-1deg] transition hover:rotate-0 max-w-[260px] w-full border border-neutral-300">
+                            <img src={cap.photo_url} alt="Kapszula" className="w-full h-52 object-cover rounded shadow-inner" />
+                            <div className="font-hand text-xl mt-3 text-center text-neutral-800">
+                              {cap.message}
+                            </div>
+                            <div className="text-[9px] font-mono text-neutral-500 text-center mt-1">
+                              Feltöltve: {cap.created_at ? cap.created_at.split('T')[0] : ''}
+                            </div>
+                          </div>
+                        ) : (
+                          /* Zárolt, lefordított Polaroid fotó */
+                          <div className="bg-neutral-900 border-2 border-neutral-800 p-4 pb-5 rounded-2xl shadow-xl rotate-[1deg] max-w-[250px] w-full flex flex-col items-center gap-3">
+                            <div className="w-full h-44 bg-neutral-950 border border-neutral-800/80 rounded-xl flex flex-col items-center justify-center p-3 text-center gap-2">
+                              <span className="text-3xl">🔒</span>
+                              <span className="text-[10px] font-mono text-amber-400/90 tracking-wide">
+                                {isUploader ? 'Te rejtetted el' : 'Detti rejtette el neked ✨'}
+                              </span>
+                            </div>
+                            <div className="flex flex-col items-center gap-0.5">
+                              <span className="text-[11px] font-mono text-neutral-400">
+                                Felnyitás dátuma:
+                              </span>
+                              <span className="text-xs font-mono text-rose-300 font-semibold">
+                                {cap.unlock_date}
+                              </span>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
               )}
             </footer>
